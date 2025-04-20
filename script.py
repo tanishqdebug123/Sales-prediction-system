@@ -9,6 +9,10 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
+
+# Data preprcessing
+
+
 store_sales = pd.read_csv('train.csv')
 # print(store_sales.head(10))
 # print(store_sales.info())
@@ -93,7 +97,76 @@ print('y_test Shape:', y_test.shape)
 sales_dates = monthly_sales['date'][-12:].reset_index(drop=True)
 predict_df = pd.DataFrame(sales_dates)
 
+# print(predict_df)
+
 act_sales = monthly_sales['sales'][-13:].to_list()
 
-print(predict_df)
 
+
+#Model selection and training
+
+#XG boost
+
+
+xgb_model = XGBRegressor(n_estimators=100, learning_rate=0.2, objective='reg:squarederror')
+xgb_model.fit(X_train, y_train)
+xgb_pred = xgb_model.predict(X_test)
+
+xgb_pred = xgb_pred.reshape(-1,1)
+xgb_pred_test_set = np.concatenate([xgb_pred,X_test], axis=1)
+xgb_pred_test_set = scaler.inverse_transform(xgb_pred_test_set)
+
+result_list = []
+for index in range(0, len(xgb_pred_test_set)):
+    result_list.append(xgb_pred_test_set[index][0] + act_sales[index])
+xgb_pred_series = pd.Series(result_list, name='xgb_pred')
+predict_df = predict_df.merge(xgb_pred_series, left_index=True, right_index=True)
+
+xgb_rmse = np.sqrt(mean_squared_error(predict_df['xgb_pred'], monthly_sales['sales'][-12:]))
+xgb_mae = mean_absolute_error(predict_df['xgb_pred'], monthly_sales['sales'][-12:])
+xgb_r2 = r2_score(predict_df['xgb_pred'], monthly_sales['sales'][-12:])
+print('XG Boost RMSE: ', xgb_rmse)
+print('XG Boost MAE: ', xgb_mae)
+print('XG Boost R2 Score: ', xgb_r2)
+
+
+
+plt.figure(figsize=(15,7))
+plt.plot(monthly_sales['date'], monthly_sales['sales'])
+plt.plot(predict_df['date'], predict_df['xgb_pred'])
+plt.title("Customer Sales Forecast using XG Boost")
+plt.xlabel("Date")
+plt.ylabel("Sales")
+plt.legend(["Original Sales", "Predicted Sales"])
+plt.show()
+
+
+# Parameter tuning using XG Boost
+
+
+import xgboost as xgb
+dtrain = xgb.DMatrix(X_train, label=y_train)
+dtest = xgb.DMatrix(X_test, label=y_test)
+params = {
+    # Parameters that we are going to tune.
+    'max_depth':6,
+    'min_child_weight': 1,
+    'eta':.3,
+    'subsample': 1,
+    'colsample_bytree': 1,
+    # Other parameters
+    'objective': 'reg:squarederror',
+}
+
+params['eval_metric'] = "mae"
+num_boost_round = 999
+model = xgb.train(
+    params,
+    dtrain,
+    num_boost_round=num_boost_round,
+    evals=[(dtest, "Test")],
+    early_stopping_rounds=10
+)
+print("Best MAE: {:.2f} with {} rounds".format(
+                 model.best_score,
+                 model.best_iteration+1))
